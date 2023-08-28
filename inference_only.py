@@ -7,17 +7,25 @@ from PIL import Image
 from torchvision import transforms
 
 import cv2
+import random
+import numpy as np
 
 resolution = 1024
-n_steps = 40
+n_steps = 50 # 40
 high_noise_frac = 0.8
+seed = -1
+
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
 
 dtype = torch.float16
 device = "cuda"
 
 print(r'loading adapter......')
 # SargeZT/t2i-adapter-sdxl-segmentation
-adapter = T2IAdapter.from_pretrained("/mnt/nfs/file_server/public/mingjiahui/models/SargeZT--t2i-adapter-sdxl-multi/depth/").to(
+adapter = T2IAdapter.from_pretrained("/mnt/nfs/file_server/public/mingjiahui/models/SargeZT--t2i-adapter-sdxl-multi/segmentation/").to(
     dtype=dtype, device=device
 )
 print(f'loading sdxl......')
@@ -29,7 +37,7 @@ base = StableDiffusionXLAdapterPipeline.from_pretrained(
     adapter=adapter,
 ).to(device)
 
-print(f'loading sdxl refiner......')
+# print(f'loading sdxl refiner......')
 # from diffusers import DiffusionPipeline
 # refiner = DiffusionPipeline.from_pretrained(
 #     "/mnt/nfs/file_server/public/mingjiahui/models/stabilityai--stable-diffusion-xl-refiner-1.0",
@@ -40,6 +48,7 @@ print(f'loading sdxl refiner......')
 #     variant="fp16",
 # )
 
+print(f'loading sdxl refiner......')
 from diffusers import StableDiffusionPipeline
 refiner = StableDiffusionPipeline.from_single_file(
     '/mnt/nfs/file_server/public/mingjiahui/models/stabilityai--stable-diffusion-xl-refiner-1.0/sd_xl_refiner_1.0.safetensors',
@@ -62,19 +71,19 @@ refiner.to("cuda")
 # # Segment the image
 # preprocessed_image = sam(input_image)
 # display(preprocessed_image)
-
-# new add
-print(f'prepare input.....')
-img_path = r'/mnt/nfs/file_server/public/mingjiahui/data/inference_test/000000000285.jpg'       # 632
-depth_path = img_path.replace('.jpg', '.depth.png')
-input_image = cv2.imread(img_path)
+depth_path = r'/home/mingjiahui/data/demo_mask.png'
 preprocessed_image = cv2.imread(depth_path)
-cv2.imwrite('/home/mingjiahui/data/2.jpg', input_image)
 cv2.imwrite('/home/mingjiahui/data/2_depth.jpg', preprocessed_image)
-# input_image = Image.fromarray(input_image).convert('RGB')
-# preprocessed_image = Image.fromarray(preprocessed_image).convert('RGB')
-# new_size = (resolution, resolution)
-# cv2.resize(input_image, (new_size))
+
+# # new add load data
+# print(f'prepare input.....')
+# img_path = r'/mnt/nfs/file_server/public/mingjiahui/data/inference_test/000000000285.jpg'       # 632
+# depth_path = img_path.replace('.jpg', '.depth.png')
+# input_image = cv2.imread(img_path)
+# preprocessed_image = cv2.imread(depth_path)
+# cv2.imwrite('/home/mingjiahui/data/2.jpg', input_image)
+# cv2.imwrite('/home/mingjiahui/data/2_depth.jpg', preprocessed_image)
+
 
 transform = transforms.Compose(
     [
@@ -83,18 +92,19 @@ transform = transforms.Compose(
             interpolation=transforms.InterpolationMode.BILINEAR,
         ),
         transforms.CenterCrop(resolution),
-        # transforms.Grayscale(),
+        transforms.Grayscale(1),
         transforms.ToTensor(),
+        transforms.ConvertImageDtype(dtype=dtype),
     ]
 )
 
 preprocessed_image = Image.fromarray(preprocessed_image).convert('RGB')
-preprocessed_image_t = transform(preprocessed_image).unsqueeze(0).to(dtype)
+preprocessed_image_t = transform(preprocessed_image).unsqueeze(0)
 
-# prompt = "An zombie riding a unicorn in New York City"
-txt_path = img_path.replace('.jpg', '.txt')
-with open(txt_path, 'r')as file:
-    prompt = file.readline().strip()
+prompt = "An zombie riding a unicorn in New York City"
+# txt_path = img_path.replace('.jpg', '.txt')
+# with open(txt_path, 'r')as file:
+#     prompt = file.readline().strip()
 
 print(f'start inference ......')
 base_output = base(
@@ -117,22 +127,21 @@ image = refiner(
 # display(image)
 
 # w refiner
-image.save('/home/mingjiahui/data/2_res.jpg')
-# cv2.imwrite('/home/mingjiahui/data/2_res.jpg', image)
+image.save('/home/mingjiahui/data/2_res_refiner.jpg')
 
-# # w/o refiner
-# from basicsr.utils import tensor2img
-# from diffusers import AutoencoderKL
-# print(f'loading vae')
-# vae = AutoencoderKL.from_pretrained(
-#                 "/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0/",
-#                 subfolder="vae",
-#                 revision=None,
-#             )
-# res = vae.decode(base_output.to(torch.float32).cpu() / vae.config.scaling_factor, return_dict=False)[0]
-# res = (res / 2 + 0.5).clamp(0, 1)
-# res = tensor2img(res)
-#
-# print(type(res))
-# print(res.shape)
-# cv2.imwrite('/home/mingjiahui/data/2_res.jpg', res)
+# w/o refiner
+from basicsr.utils import tensor2img
+from diffusers import AutoencoderKL
+print(f'loading vae')
+vae = AutoencoderKL.from_pretrained(
+                "/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0/",
+                subfolder="vae",
+                revision=None,
+            )
+res = vae.decode(base_output.to(torch.float32).cpu() / vae.config.scaling_factor, return_dict=False)[0]
+res = (res / 2 + 0.5).clamp(0, 1)
+res = tensor2img(res)
+
+print(type(res))
+print(res.shape)
+cv2.imwrite('/home/mingjiahui/data/2_res_base.jpg', res)
